@@ -1,0 +1,152 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origins: "*"
+            allowed-methods: "*"
+            allowed-headers: "*"
+            exposed-headers: "Authorization, X-Correlation-ID"
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+        - name: RequestRateLimiter
+          args:
+            redis-rate-limiter.replenishRate: 100
+            redis-rate-limiter.burstCapacity: 200
+            redis-rate-limiter.requestedTokens: 1
+      routes:
+        # Auth Service
+        - id: auth-service
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/v1/auth/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: auth-cb
+                fallbackUri: forward:/fallback/auth
+
+        # User Service
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/v1/users/**, /api/v1/organizations/**
+          filters:
+            - JwtAuthFilter
+            - name: CircuitBreaker
+              args:
+                name: user-cb
+
+        # Shipment Service
+        - id: shipment-service
+          uri: lb://shipment-service
+          predicates:
+            - Path=/api/v1/shipments/**
+          filters:
+            - JwtAuthFilter
+            - name: CircuitBreaker
+              args:
+                name: shipment-cb
+
+        # Fleet Service
+        - id: fleet-service
+          uri: lb://fleet-service
+          predicates:
+            - Path=/api/v1/fleet/**, /api/v1/vehicles/**
+          filters:
+            - JwtAuthFilter
+
+        # Driver Service
+        - id: driver-service
+          uri: lb://driver-service
+          predicates:
+            - Path=/api/v1/drivers/**
+          filters:
+            - JwtAuthFilter
+
+        # Route Optimization
+        - id: route-service
+          uri: lb://route-optimization-service
+          predicates:
+            - Path=/api/v1/routes/**
+          filters:
+            - JwtAuthFilter
+
+        # Warehouse Service
+        - id: warehouse-service
+          uri: lb://warehouse-service
+          predicates:
+            - Path=/api/v1/warehouses/**
+          filters:
+            - JwtAuthFilter
+
+        # Tracking Service
+        - id: tracking-service
+          uri: lb://tracking-service
+          predicates:
+            - Path=/api/v1/tracking/**
+          filters:
+            - JwtAuthFilter
+
+        # Notification Service
+        - id: notification-service
+          uri: lb://notification-service
+          predicates:
+            - Path=/api/v1/notifications/**
+          filters:
+            - JwtAuthFilter
+
+        # Analytics Service
+        - id: analytics-service
+          uri: lb://analytics-service
+          predicates:
+            - Path=/api/v1/analytics/**
+          filters:
+            - JwtAuthFilter
+
+        # WebSocket Gateway
+        - id: websocket-gateway
+          uri: lb:ws://websocket-gateway
+          predicates:
+            - Path=/ws/**
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      auth-cb:
+        slidingWindowSize: 10
+        permittedNumberOfCallsInHalfOpenState: 3
+        slidingWindowType: COUNT_BASED
+        minimumNumberOfCalls: 5
+        waitDurationInOpenState: 30s
+        failureRateThreshold: 50
+      shipment-cb:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,gateway
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.routex: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId}] %logger{36} - %msg%n"
