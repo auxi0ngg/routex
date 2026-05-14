@@ -26,7 +26,7 @@ RouteX is a cloud-native microservices platform for end-to-end logistics operati
 ## Quick Start
 
 ```bash
-git clone https://github.com/yourusername/routex.git
+git clone https://github.com/auxi0ngg/routex.git
 cd routex
 docker-compose up -d
 ```
