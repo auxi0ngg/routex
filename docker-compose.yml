@@ -1,0 +1,570 @@
+version: "3.9"
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  routex-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ─── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  postgres-auth-data:
+  postgres-shipment-data:
+  postgres-fleet-data:
+  postgres-driver-data:
+  postgres-tracking-data:
+  postgres-analytics-data:
+  postgres-notification-data:
+  postgres-warehouse-data:
+  redis-data:
+  kafka-data:
+  zookeeper-data:
+  elasticsearch-data:
+  grafana-data:
+  prometheus-data:
+
+# ─── Services ─────────────────────────────────────────────────────────────────
+services:
+
+  # ─── Infrastructure ─────────────────────────────────────────────────────────
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.3
+    container_name: routex-zookeeper
+    networks: [routex-network]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: routex-kafka
+    networks: [routex-network]
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:29092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: routex-kafka-ui
+    networks: [routex-network]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8092:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: routex-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: routex-kafka-init
+    networks: [routex-network]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic shipment-created --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic shipment-assigned --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic driver-location-updated --partitions 6 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic route-optimized --partitions 2 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic delivery-started --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic delivery-completed --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic tracking-events --partitions 6 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic notification-events --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic analytics-events --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic fleet-events --partitions 2 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic user-events --partitions 2 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic analytics-events.DLT --partitions 1 --replication-factor 1
+      echo 'Kafka topics created successfully'
+      "
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: routex-redis
+    networks: [routex-network]
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── PostgreSQL Databases (one per service — Database-per-Service pattern) ──
+
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: routex-postgres-auth
+    networks: [routex-network]
+    environment:
+      POSTGRES_DB: routex_auth
+      POSTGRES_USER: routex
+      POSTGRES_PASSWORD: routex123
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routex -d routex_auth"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-shipment:
+    image: postgres:16-alpine
+    container_name: routex-postgres-shipment
+    networks: [routex-network]
+    environment:
+      POSTGRES_DB: routex_shipment
+      POSTGRES_USER: routex
+      POSTGRES_PASSWORD: routex123
+    volumes:
+      - postgres-shipment-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routex -d routex_shipment"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-fleet:
+    image: postgres:16-alpine
+    container_name: routex-postgres-fleet
+    networks: [routex-network]
+    environment:
+      POSTGRES_DB: routex_fleet
+      POSTGRES_USER: routex
+      POSTGRES_PASSWORD: routex123
+    volumes:
+      - postgres-fleet-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routex -d routex_fleet"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-tracking:
+    image: postgres:16-alpine
+    container_name: routex-postgres-tracking
+    networks: [routex-network]
+    environment:
+      POSTGRES_DB: routex_tracking
+      POSTGRES_USER: routex
+      POSTGRES_PASSWORD: routex123
+    volumes:
+      - postgres-tracking-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routex -d routex_tracking"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-analytics:
+    image: postgres:16-alpine
+    container_name: routex-postgres-analytics
+    networks: [routex-network]
+    environment:
+      POSTGRES_DB: routex_analytics
+      POSTGRES_USER: routex
+      POSTGRES_PASSWORD: routex123
+    volumes:
+      - postgres-analytics-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routex -d routex_analytics"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-notification:
+    image: postgres:16-alpine
+    container_name: routex-postgres-notification
+    networks: [routex-network]
+    environment:
+      POSTGRES_DB: routex_notification
+      POSTGRES_USER: routex
+      POSTGRES_PASSWORD: routex123
+    volumes:
+      - postgres-notification-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routex -d routex_notification"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-warehouse:
+    image: postgres:16-alpine
+    container_name: routex-postgres-warehouse
+    networks: [routex-network]
+    environment:
+      POSTGRES_DB: routex_warehouse
+      POSTGRES_USER: routex
+      POSTGRES_PASSWORD: routex123
+    volumes:
+      - postgres-warehouse-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routex -d routex_warehouse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-driver:
+    image: postgres:16-alpine
+    container_name: routex-postgres-driver
+    networks: [routex-network]
+    environment:
+      POSTGRES_DB: routex_driver
+      POSTGRES_USER: routex
+      POSTGRES_PASSWORD: routex123
+    volumes:
+      - postgres-driver-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routex -d routex_driver"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── Monitoring Stack ────────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v2.49.1
+    container_name: routex-prometheus
+    networks: [routex-network]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: routex-grafana
+    networks: [routex-network]
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: routex123
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: routex-loki
+    networks: [routex-network]
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./infrastructure/monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
+
+  # ─── Application Services ────────────────────────────────────────────────────
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: routex-api-gateway
+    networks: [routex-network]
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: routex-auth-service
+    networks: [routex-network]
+    ports:
+      - "8081:8081"
+    environment:
+      DB_HOST: postgres-auth
+      DB_PORT: 5432
+      DB_NAME: routex_auth
+      DB_USER: routex
+      DB_PASSWORD: routex123
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_SERVERS: kafka:29092
+      JWT_SECRET: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  shipment-service:
+    build:
+      context: ./services/shipment-service
+      dockerfile: Dockerfile
+    container_name: routex-shipment-service
+    networks: [routex-network]
+    ports:
+      - "8083:8083"
+    environment:
+      DB_HOST: postgres-shipment
+      DB_PORT: 5432
+      DB_NAME: routex_shipment
+      DB_USER: routex
+      DB_PASSWORD: routex123
+      REDIS_HOST: redis
+      KAFKA_SERVERS: kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      postgres-shipment:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  fleet-service:
+    build:
+      context: ./services/fleet-service
+      dockerfile: Dockerfile
+    container_name: routex-fleet-service
+    networks: [routex-network]
+    ports:
+      - "8084:8084"
+    environment:
+      DB_HOST: postgres-fleet
+      DB_PORT: 5432
+      DB_NAME: routex_fleet
+      DB_USER: routex
+      DB_PASSWORD: routex123
+      KAFKA_SERVERS: kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      postgres-fleet:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  driver-service:
+    build:
+      context: ./services/driver-service
+      dockerfile: Dockerfile
+    container_name: routex-driver-service
+    networks: [routex-network]
+    ports:
+      - "8085:8085"
+    environment:
+      DB_HOST: postgres-driver
+      DB_NAME: routex_driver
+      DB_USER: routex
+      DB_PASSWORD: routex123
+      KAFKA_SERVERS: kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      postgres-driver:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  tracking-service:
+    build:
+      context: ./services/tracking-service
+      dockerfile: Dockerfile
+    container_name: routex-tracking-service
+    networks: [routex-network]
+    ports:
+      - "8088:8088"
+    environment:
+      DB_HOST: postgres-tracking
+      DB_NAME: routex_tracking
+      DB_USER: routex
+      DB_PASSWORD: routex123
+      REDIS_HOST: redis
+      KAFKA_SERVERS: kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      postgres-tracking:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+    container_name: routex-analytics-service
+    networks: [routex-network]
+    ports:
+      - "8090:8090"
+    environment:
+      DB_HOST: postgres-analytics
+      DB_NAME: routex_analytics
+      DB_USER: routex
+      DB_PASSWORD: routex123
+      KAFKA_SERVERS: kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      postgres-analytics:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: routex-notification-service
+    networks: [routex-network]
+    ports:
+      - "8089:8089"
+    environment:
+      DB_HOST: postgres-notification
+      DB_NAME: routex_notification
+      DB_USER: routex
+      DB_PASSWORD: routex123
+      KAFKA_SERVERS: kafka:29092
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-noreply@routex.io}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-changeme}
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      postgres-notification:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  warehouse-service:
+    build:
+      context: ./services/warehouse-service
+      dockerfile: Dockerfile
+    container_name: routex-warehouse-service
+    networks: [routex-network]
+    ports:
+      - "8087:8087"
+    environment:
+      DB_HOST: postgres-warehouse
+      DB_NAME: routex_warehouse
+      DB_USER: routex
+      DB_PASSWORD: routex123
+      KAFKA_SERVERS: kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      postgres-warehouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+  route-optimization-service:
+    build:
+      context: ./services/route-optimization-service
+      dockerfile: Dockerfile
+    container_name: routex-route-service
+    networks: [routex-network]
+    ports:
+      - "8086:8086"
+    environment:
+      REDIS_HOST: redis
+      KAFKA_SERVERS: kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Frontend ────────────────────────────────────────────────────────────────
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: routex-frontend
+    networks: [routex-network]
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+  # ─── NGINX Reverse Proxy ─────────────────────────────────────────────────────
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: routex-nginx
+    networks: [routex-network]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - api-gateway
+      - frontend
+    restart: unless-stopped

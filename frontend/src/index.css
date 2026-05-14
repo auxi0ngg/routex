@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  html { font-family: 'Inter', system-ui, sans-serif; }
+  body { margin: 0; }
+}
+
+/* Leaflet z-index fix */
+.leaflet-pane, .leaflet-tile, .leaflet-marker-icon,
+.leaflet-marker-shadow, .leaflet-tile-pane, .leaflet-overlay-pane,
+.leaflet-shadow-pane, .leaflet-marker-pane, .leaflet-popup-pane,
+.leaflet-tooltip-pane { z-index: 1 !important; }
+.leaflet-top, .leaflet-bottom { z-index: 2 !important; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #64748b; }

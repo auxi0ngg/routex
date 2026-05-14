@@ -1,0 +1,38 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: routex
+  labels:
+    app.kubernetes.io/name: routex
+    environment: production
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: routex-common-config
+  namespace: routex
+data:
+  SPRING_PROFILES_ACTIVE: "kubernetes"
+  KAFKA_SERVERS: "kafka-service:9092"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  TZ: "UTC"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: routex-service-urls
+  namespace: routex
+data:
+  AUTH_SERVICE_URL: "http://auth-service:8081"
+  SHIPMENT_SERVICE_URL: "http://shipment-service:8083"
+  FLEET_SERVICE_URL: "http://fleet-service:8084"
+  DRIVER_SERVICE_URL: "http://driver-service:8085"
+  ROUTE_SERVICE_URL: "http://route-optimization-service:8086"
+  WAREHOUSE_SERVICE_URL: "http://warehouse-service:8087"
+  TRACKING_SERVICE_URL: "http://tracking-service:8088"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:8089"
+  ANALYTICS_SERVICE_URL: "http://analytics-service:8090"

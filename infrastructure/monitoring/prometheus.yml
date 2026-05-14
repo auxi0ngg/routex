@@ -1,0 +1,94 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: routex-local
+    environment: development
+
+rule_files:
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  # API Gateway
+  - job_name: api-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [api-gateway:8080]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: service
+        replacement: api-gateway
+
+  # Auth Service
+  - job_name: auth-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [auth-service:8081]
+
+  # Shipment Service
+  - job_name: shipment-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [shipment-service:8083]
+
+  # Fleet Service
+  - job_name: fleet-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [fleet-service:8084]
+
+  # Driver Service
+  - job_name: driver-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [driver-service:8085]
+
+  # Route Optimization Service
+  - job_name: route-optimization-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [route-optimization-service:8086]
+
+  # Tracking Service
+  - job_name: tracking-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [tracking-service:8088]
+
+  # Analytics Service
+  - job_name: analytics-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [analytics-service:8090]
+
+  # Notification Service
+  - job_name: notification-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [notification-service:8089]
+
+  # Warehouse Service
+  - job_name: warehouse-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [warehouse-service:8087]
+
+  # Kafka JMX metrics (via JMX Exporter sidecar in production)
+  - job_name: kafka
+    static_configs:
+      - targets: [kafka:9092]
+
+  # Redis Exporter
+  - job_name: redis
+    static_configs:
+      - targets: [redis:6379]
